@@ -81,12 +81,13 @@
 //     );
 //   }
 // }
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:resqtrack1/authentication/login_screen.dart';
 import 'package:resqtrack1/authentication/signup_screen.dart';
 import 'package:resqtrack1/screens/map_screen.dart';
-// import 'package:google_map_flutter/OpenStreetMap/openstreetmap.dart';
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -106,12 +107,13 @@ class MyApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
       ),
-      initialRoute: '/login',
-      routes: {
-        '/login': (context) => LoginScreen(),
-        '/signup': (context) => SignupScreen(),
-        '/map': (context) => const MapScreen(),
-      },
+      // initialRoute: '/login',
+      // routes: {
+      //   '/login': (context) => LoginScreen(),
+      //   '/signup': (context) => SignupScreen(),
+      //   '/map': (context) => const MapScreen(),
+      // },
+      home: FirebaseAuth.instance.currentUser == null ? LoginScreen() : MapScreen(),
     );
   }
 }

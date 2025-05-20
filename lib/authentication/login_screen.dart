@@ -424,7 +424,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (userFirebase != null) {
         DatabaseReference userRef = FirebaseDatabase.instance.ref().child("users").child(userFirebase.uid);
-        userRef.once().then((snap) {
+        await userRef.once().then((snap) {
           if (snap.snapshot.value != null) {
             if ((snap.snapshot.value as Map)["blockStatus"] == "no") {
               userName = (snap.snapshot.value as Map)["name"];
