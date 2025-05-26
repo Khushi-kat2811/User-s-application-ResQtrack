@@ -48,6 +48,7 @@ dependencies:
   flutter_map_location_marker:
   http:
   flutter_polyline_points:
+  agora_rtc_engine:
 
 dev_dependencies:
   flutter_test:

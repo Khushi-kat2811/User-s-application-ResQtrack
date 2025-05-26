@@ -431,7 +431,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Navigator.pushReplacementNamed(context, '/map');
             } else {
               FirebaseAuth.instance.signOut();
-              cMethods.displaySnackbar("You are blocked. Contact admin: xyz@gmail.com", context);
+              cMethods.displaySnackbar("You are blocked. Contact admin: khushi@gmail.com", context);
             }
           } else {
             FirebaseAuth.instance.signOut();
