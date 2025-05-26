@@ -12,3 +12,8 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# Ignore build outputs and intermediates
+build/
+android/app/build/
+android/app/build/intermediates/
+*.apk
