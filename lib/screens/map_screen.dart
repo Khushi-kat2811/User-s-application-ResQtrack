@@ -27,6 +27,7 @@ class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   final GlobalKey<ScaffoldState> sKey = GlobalKey<ScaffoldState>();
   final CommonMethods cMethods = CommonMethods();
+  static const String _orsApiKey = '5b3ce3597851110001cf62489d0fc290e5e14ae8abf8e2f63ee8fab0';
 
   // LatLng _currentLocation = LatLng(48.8583, 2.2944); // Default location
   LatLng _currentLocation = LatLng(48.8583, 2.2944);
@@ -36,22 +37,27 @@ class _MapScreenState extends State<MapScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   StreamSubscription<DatabaseEvent>? _driverLocationSub;
-
+  StreamSubscription<Position>? _positionStreamSub;
+  Position? _lastPosition;
+  LatLng? _hospitalLocation;
   double searchContainerHeight = 276;
-
+  bool _navigateToHospital = false;
   bool _otpGenerated = false;
   String? _generatedOtp;
+  List<LatLng> _hospitalRoutePolyline = [];
 
   @override
   void initState() {
     super.initState();
     _getCurrentLocation();
     _listenToDriverLocation();
+    startLiveLocationUpdates();
   }
 
   @override
   void dispose() {
     _driverLocationSub?.cancel();
+    _positionStreamSub?.cancel();
     super.dispose();
   }
 
@@ -79,6 +85,7 @@ class _MapScreenState extends State<MapScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _mapController.move(_currentLocation, 15.0);
       });
+      startLiveLocationUpdates();
 
       await getUserInfoAndCheckBlockStatus();
     } catch (e) {
@@ -86,6 +93,45 @@ class _MapScreenState extends State<MapScreen> {
     } finally {
       setState(() => _isLoading = false);
     }
+  }
+
+  void startLiveLocationUpdates(){
+
+    _positionStreamSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 1, // ⬅️ Update when moved at least 1 meter
+      ),
+    ).listen((Position position) {
+      if (_lastPosition == null ||
+          Geolocator.distanceBetween(
+            _lastPosition!.latitude,
+            _lastPosition!.longitude,
+            position.latitude,
+            position.longitude,
+          ) >= 1) {
+        _lastPosition = position;
+
+        LatLng newLocation = LatLng(position.latitude, position.longitude);
+        setState(() {
+          _currentLocation = newLocation;
+        });
+
+        // Update Firebase with new location
+        FirebaseDatabase.instance
+            .ref()
+            .child("users")
+            .child(FirebaseAuth.instance.currentUser!.uid)
+            .update({
+          "latitude": position.latitude,
+          "longitude": position.longitude,
+          "lastUpdated": ServerValue.timestamp,
+        });
+
+        // Optional: center map
+        _mapController.move(newLocation, _mapController.camera.zoom);
+      }
+    });
   }
 
   Future<void> _checkLocationPermission() async {
@@ -134,6 +180,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _listenToDriverLocation() {
+    if (_navigateToHospital) return;
     if (widget.driveruid == null || widget.driveruid!.isEmpty) return;
 
     final DatabaseReference driverRef = FirebaseDatabase.instance
@@ -170,7 +217,7 @@ class _MapScreenState extends State<MapScreen> {
               });
             }
 
-            if (distanceToUser <= 100 && !_otpGenerated) {
+            if (distanceToUser <= 200 && !_otpGenerated) {
               _generatedOtp = _generateOtp();
               _otpGenerated = true;
 
@@ -249,28 +296,68 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     // Listen for connectedHospital = "Yes"
+    // otpRef.onValue.listen((event) async {
+    //   final data = event.snapshot.value as Map?;
+    //   if (data != null && data["connectedHospital"] == "Yes") {
+    //     Navigator.of(context, rootNavigator: true).pop(); // Close dialog
+    //
+    //     // Stop driver tracking
+    //     await _driverLocationSub?.cancel();
+    //     _driverLocationSub = null;
+    //
+    //     // Extract hospital coordinates
+    //     final double? hospitalLat = data["hospital_lat"]?.toDouble();
+    //     final double? hospitalLng = data["hospital_lon"]?.toDouble();
+    //
+    //     if (hospitalLat != null && hospitalLng != null && _lastDriverLocation != null) {
+    //       LatLng hospitalLocation = LatLng(hospitalLat, hospitalLng);
+    //       setState(() {
+    //         _routePoints.clear(); // clear old route
+    //       });
+    //       _fetchRoute(_currentLocation, hospitalLocation); // draw route to hospital
+    //     }
     otpRef.onValue.listen((event) async {
-      final data = event.snapshot.value as Map?;
-      if (data != null && data["connectedHospital"] == "Yes") {
-        Navigator.of(context, rootNavigator: true).pop(); // Close dialog
-
-        // Stop driver tracking
+      final data = event.snapshot.value;
+      if (data is Map && data.containsKey("hospital_lat") &&
+          data.containsKey("hospital_lon")) {
+        if (data["connectedHospital"] == "Yes") {
+          Navigator.of(context, rootNavigator: true).pop(); // Close dialog
+        }
         await _driverLocationSub?.cancel();
         _driverLocationSub = null;
+        double? lat = double.tryParse(data["hospital_lat"].toString());
+        double? lng = double.tryParse(data["hospital_lon"].toString());
 
-        // Extract hospital coordinates
-        final double? hospitalLat = data["hospital_lat"]?.toDouble();
-        final double? hospitalLng = data["hospital_lon"]?.toDouble();
+        if (!mounted) return; // might change this
 
-        if (hospitalLat != null && hospitalLng != null && _lastDriverLocation != null) {
-          LatLng hospitalLocation = LatLng(hospitalLat, hospitalLng);
+        if (lat != null && lng != null) {
           setState(() {
-            _routePoints.clear(); // clear old route
+            _routePoints.clear();
+            _hospitalLocation = LatLng(lat, lng);
+            _navigateToHospital = true;
           });
-          _fetchRoute(_currentLocation, hospitalLocation); // draw route to hospital
+           _fetchHospitalRoute(_currentLocation, _hospitalLocation!);
         }
       }
     });
+
+    }
+  Future<void> _fetchHospitalRoute(LatLng start, LatLng end) async {
+    final url = Uri.parse(
+        'https://api.openrouteservice.org/v2/directions/driving-car?api_key=$_orsApiKey&start=${start.longitude},${start.latitude}&end=${end.longitude},${end.latitude}');
+
+    try {
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        List coords = data['features'][0]['geometry']['coordinates'];
+        setState(() {
+          _hospitalRoutePolyline = coords.map<LatLng>((coord) => LatLng(coord[1], coord[0])).toList();
+        });
+      }
+    } catch (e) {
+      print('Error fetching hospital route: $e');
+    }
   }
 
 
@@ -282,6 +369,7 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     final response = await http.get(url);
+    if (_navigateToHospital) return; // might change this
     if (response.statusCode == 200) {
       final decoded = json.decode(response.body);
       final geometry = decoded['features'][0]['geometry']['coordinates'] as List;
@@ -344,7 +432,7 @@ class _MapScreenState extends State<MapScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.resqtrack1',
               ),
-              if (_driverLocation != null)
+              if (_driverLocation != null )
                 MarkerLayer(
                   markers: [
                     Marker(
@@ -367,11 +455,18 @@ class _MapScreenState extends State<MapScreen> {
               ),
               PolylineLayer(
                 polylines: [
-                  Polyline(
-                    points: _routePoints,
-                    color: Colors.blue,
-                    strokeWidth: 4.0,
-                  ),
+                  if (_routePoints.isNotEmpty)
+                    Polyline(
+                      points: _routePoints,
+                      color: Colors.blue,
+                      strokeWidth: 4.0,
+                    ),
+                  if (_hospitalRoutePolyline.isNotEmpty)
+                    Polyline(
+                      points: _hospitalRoutePolyline,
+                      color: Colors.green,
+                      strokeWidth: 4.0,
+                    ),
                 ],
               ),
             ],
